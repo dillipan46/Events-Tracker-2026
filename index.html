@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel-Like Event Table with Auto-Sort</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen flex flex-col">
+
+    <header class="bg-emerald-700 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-emerald-600 p-2 rounded-lg shadow-inner">
+                    <i class="fa-solid fa-table-cells text-2xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">Event & Schedule Sheet</h1>
+                    <p class="text-xs text-emerald-200">Auto-Sorted by Date (Ascending) • RTDB Connected</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button id="loadBtn" class="bg-emerald-800 hover:bg-emerald-900 text-emerald-100 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                    <i class="fa-solid fa-cloud-arrow-down"></i> Load from Cloud
+                </button>
+                <button id="saveBtn" class="bg-emerald-500 hover:bg-emerald-400 text-white px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Save to Cloud
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 py-6 flex flex-col gap-4">
+        
+        <!-- Toolbar & Controls -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-4">
+                <button id="addRowBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-md shadow text-sm flex items-center space-x-2 transition">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Add Row</span>
+                </button>
+                <span class="text-xs text-slate-500 italic">Rows automatically re-order by Date (Earliest first)</span>
+            </div>
+            <div class="text-xs text-slate-500 flex items-center gap-4">
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Arranged</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span> Pending</span>
+                <span id="rowCountBadge" class="bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium">0 rows</span>
+                <span id="syncStatusBadge" class="text-emerald-600 font-semibold flex items-center gap-1"><i class="fa-solid fa-circle-check"></i> Ready</span>
+            </div>
+        </div>
+
+        <!-- Spreadsheet Table Container -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-grow flex flex-col">
+            <div class="overflow-x-auto flex-grow">
+                <table id="excelTable" class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider select-none">
+                            <th class="py-3 px-4 w-12 text-center border-r border-slate-200">#</th>
+                            <th class="py-3 px-4 w-44 border-r border-slate-200">Date <i class="fa-solid fa-arrow-up text-[10px] text-emerald-600 ml-1"></i></th>
+                            <th class="py-3 px-4 border-r border-slate-200">Event Description</th>
+                            <th class="py-3 px-4 w-44 border-r border-slate-200 text-right">Amount (₹)</th>
+                            <th class="py-3 px-4 w-36 border-r border-slate-200">Status</th>
+                            <th class="py-3 px-4 w-28 text-center border-r border-slate-200">Indicator</th>
+                            <th class="py-3 px-4 w-16 text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-200 text-sm text-slate-700">
+                        <!-- Dynamic rows injected here -->
+                    </tbody>
+                    <tfoot>
+                        <tr class="bg-slate-50 font-semibold text-slate-700 border-t border-slate-200">
+                            <td colspan="3" class="py-3 px-4 text-right border-r border-slate-200 text-xs uppercase tracking-wider">Total Amount:</td>
+                            <td id="totalAmountCell" class="py-3 px-4 text-right font-mono text-emerald-700 border-r border-slate-200">₹0.00</td>
+                            <td colspan="3" class="bg-slate-50"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex justify-between items-center">
+                <button id="addBottomRowBtn" class="text-emerald-700 hover:text-emerald-800 text-xs font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-circle-plus"></i> Add Row
+                </button>
+                <div class="text-xs text-slate-500">
+                    Connected to <span class="font-mono text-slate-600">my-calendar-dc01f-default-rtdb.firebaseio.com</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const RTDB_URL = "https://my-calendar-dc01f-default-rtdb.firebaseio.com/";
+        let rowsDataMap = {}; // Dictionary mapping id -> row object
+
+        // Format number to Indian Currency Format (₹ with commas)
+        function formatRupee(amount) {
+            const num = parseFloat(amount) || 0;
+            return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // XSS safety helper
+        function escapeHTML(str) {
+            return str ? String(str).replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            ) : '';
+        }
+
+        // Get sorted array of rows based on Date ascending
+        function getSortedRows() {
+            const entries = Object.entries(rowsDataMap);
+            entries.sort((a, b) => {
+                const dateA = a[1].date || '';
+                const dateB = b[1].date || '';
+                if (dateA === dateB) return 0;
+                if (!dateA) return 1; // empty dates go last
+                if (!dateB) return -1;
+                return dateA.localeCompare(dateB);
+            });
+            return entries; // Returns array of [id, rowObject]
+        }
+
+        // Render table rows and recalculate totals
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            const sortedEntries = getSortedRows();
+
+            if (sortedEntries.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center py-12 text-slate-400">
+                            <div class="flex flex-col items-center justify-center space-y-2">
+                                <i class="fa-solid fa-folder-open text-3xl text-slate-300"></i>
+                                <p class="text-sm font-medium">No records found. Click "Add Row" to begin.</p>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                document.getElementById('rowCountBadge').textContent = '0 rows';
+                document.getElementById('totalAmountCell').textContent = '₹0.00';
+                return;
+            }
+
+            let totalAmount = 0;
+
+            sortedEntries.forEach(([id, row], index) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50/80 transition-colors group';
+
+                const amt = parseFloat(row.amount) || 0;
+                totalAmount += amt;
+
+                const isArranged = row.status === 'Arranged';
+                const statusBadgeClass = isArranged 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : 'bg-amber-50 text-amber-700 border-amber-200';
+                
+                const statusIconHTML = isArranged
+                    ? `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 shadow-sm" title="Arranged"><i class="fa-solid fa-check text-sm font-bold"></i></span>`
+                    : `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-600 shadow-sm animate-pulse" title="Pending"><i class="fa-solid fa-clock text-sm"></i></span>`;
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-4 text-center font-mono text-xs text-slate-400 border-r border-slate-200 bg-slate-50/50">
+                        ${index + 1}
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <input type="date" value="${row.date || new Date().toISOString().split('T')[0]}" data-id="${id}" data-field="date" 
+                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <input type="text" value="${escapeHTML(row.event)}" data-id="${id}" data-field="event" placeholder="Enter event name..."
+                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200 text-right">
+                        <div class="relative flex items-center">
+                            <span class="absolute left-2 text-xs font-semibold text-slate-400">₹</span>
+                            <input type="number" step="0.01" value="${row.amount ?? 0}" data-id="${id}" data-field="amount" placeholder="0.00"
+                                class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded pl-6 pr-2 py-1.5 text-sm text-slate-700 text-right font-mono focus:outline-none transition">
+                        </div>
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <select data-id="${id}" data-field="status"
+                            class="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none transition ${statusBadgeClass}">
+                            <option value="Arranged" ${isArranged ? 'selected' : ''}>Arranged</option>
+                            <option value="Pending" ${!isArranged ? 'selected' : ''}>Pending</option>
+                        </select>
+                    </td>
+                    <td class="py-2 px-4 text-center border-r border-slate-200">
+                        ${statusIconHTML}
+                    </td>
+                    <td class="py-2 px-4 text-center">
+                        <button onclick="window.deleteRowItem('${id}')" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-md hover:bg-rose-50 transition" title="Delete Row">
+                            <i class="fa-solid fa-trash-can text-sm"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('rowCountBadge').textContent = `${sortedEntries.length} row${sortedEntries.length === 1 ? '' : 's'}`;
+            document.getElementById('totalAmountCell').textContent = formatRupee(totalAmount);
+            
+            attachTableEventListeners();
+        }
+
+        // Attach event listeners to input fields
+        function attachTableEventListeners() {
+            const tbody = document.getElementById('tableBody');
+            
+            tbody.querySelectorAll('input, select').forEach(element => {
+                element.addEventListener('change', (e) => {
+                    const id = e.target.getAttribute('data-id');
+                    const field = e.target.getAttribute('data-field');
+                    let value = e.target.value;
+
+                    if (field === 'amount') {
+                        value = value === '' ? 0 : parseFloat(value);
+                    }
+
+                    if (rowsDataMap[id]) {
+                        rowsDataMap[id][field] = value;
+                        // If date changed, re-render immediately to trigger auto-sort
+                        if (field === 'date' || field === 'status') {
+                            renderTable();
+                        }
+                    }
+                });
+
+                if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'number')) {
+                    element.addEventListener('input', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const field = e.target.getAttribute('data-field');
+                        let value = e.target.value;
+                        if (field === 'amount') {
+                            value = value === '' ? '' : parseFloat(value);
+                        }
+                        if (rowsDataMap[id]) {
+                            rowsDataMap[id][field] = value;
+                            if (field === 'amount') {
+                                let runningTotal = Object.values(rowsDataMap).reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+                                document.getElementById('totalAmountCell').textContent = formatRupee(runningTotal);
+                            }
+                        }
+                    });
+
+                    // When date input loses focus, re-sort and re-render
+                    if (element.getAttribute('data-field') === 'date') {
+                        element.addEventListener('blur', () => {
+                            renderTable();
+                        });
+                    }
+                }
+            });
+        }
+
+        // Delete row action
+        window.deleteRowItem = function(id) {
+            delete rowsDataMap[id];
+            renderUpdateBadge('Deleted', 'text-amber-600');
+            renderTable();
+        }
+
+        // Add new row with today's date
+        function addNewRow() {
+            const today = new Date().toISOString().split('T')[0];
+            const id = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
+            rowsDataMap[id] = {
+                date: today,
+                event: '',
+                amount: 0.00,
+                status: 'Pending'
+            };
+            renderTable();
+            renderUpdateBadge('Row Added', 'text-emerald-600');
+
+            setTimeout(() => {
+                const tbody = document.getElementById('tableBody');
+                const lastRow = tbody.lastElementChild;
+                if (lastRow) {
+                    const eventInput = lastRow.querySelector('input[data-field="event"]');
+                    if (eventInput) eventInput.focus();
+                }
+            }, 50);
+        }
+
+        // Badge status helper
+        function renderUpdateBadge(text, colorClass) {
+            const badge = document.getElementById('syncStatusBadge');
+            badge.className = `${colorClass} font-semibold flex items-center gap-1`;
+            badge.innerHTML = `<i class="fa-solid fa-circle-dot"></i> ${text}`;
+        }
+
+        // Load data from Firebase Realtime Database
+        async function loadFromFirebase() {
+            renderUpdateBadge('Loading...', 'text-amber-600');
+            try {
+                const response = await fetch(`${RTDB_URL}/events.json`);
+                if (response.ok) {
+                    const data = await response.json();
+                    rowsDataMap = data || {};
+                    renderTable();
+                    renderUpdateBadge('Loaded from Cloud', 'text-emerald-600');
+                } else {
+                    renderUpdateBadge('Load Failed', 'text-rose-600');
+                }
+            } catch (err) {
+                console.error("Error loading data:", err);
+                renderUpdateBadge('Connection Error', 'text-rose-600');
+            }
+        }
+
+        // Save current table data to Firebase Realtime Database
+        async function saveToFirebase() {
+            renderUpdateBadge('Saving...', 'text-amber-600');
+            try {
+                const response = await fetch(`${RTDB_URL}/events.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(rowsDataMap)
+                });
+                if (response.ok) {
+                    renderUpdateBadge('Saved Successfully', 'text-emerald-600');
+                } else {
+                    renderUpdateBadge('Save Failed', 'text-rose-600');
+                }
+            } catch (err) {
+                console.error("Error saving data:", err);
+                renderUpdateBadge('Sync Error', 'text-rose-600');
+            }
+        }
+
+        // Initialize on DOM load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFromFirebase();
+
+            document.getElementById('addRowBtn').addEventListener('click', addNewRow);
+            document.getElementById('addBottomRowBtn').addEventListener('click', addNewRow);
+            document.getElementById('loadBtn').addEventListener('click', loadFromFirebase);
+            document.getElementById('saveBtn').addEventListener('click', saveToFirebase);
+        });
+    </script>
+</body>
+</html>
