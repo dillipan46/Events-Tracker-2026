@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel-Like Event Table - Realtime Database</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen flex flex-col">
+
+    <header class="bg-emerald-700 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-emerald-600 p-2 rounded-lg shadow-inner">
+                    <i class="fa-solid fa-table-cells text-2xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">Event & Schedule Sheet</h1>
+                    <p class="text-xs text-emerald-200">Connected to Firebase Realtime Database</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="connectionBadge" class="bg-emerald-800 text-emerald-100 text-xs px-3 py-1.5 rounded-full font-medium flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Connected
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 py-6 flex flex-col gap-4">
+        
+        <!-- Toolbar & Controls -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-4">
+                <button id="addRowBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-md shadow text-sm flex items-center space-x-2 transition">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Add Row</span>
+                </button>
+            </div>
+            <div class="text-xs text-slate-500 flex items-center gap-4">
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Arranged</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span> Pending</span>
+                <span id="rowCountBadge" class="bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium">0 rows</span>
+                <span id="syncStatusBadge" class="text-emerald-600 font-semibold flex items-center gap-1"><i class="fa-solid fa-cloud"></i> Synced</span>
+            </div>
+        </div>
+
+        <!-- Spreadsheet Container -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-grow flex flex-col">
+            <div class="overflow-x-auto flex-grow">
+                <table id="excelTable" class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider select-none">
+                            <th class="py-3 px-4 w-12 text-center border-r border-slate-200">#</th>
+                            <th class="py-3 px-4 w-44 border-r border-slate-200">Date</th>
+                            <th class="py-3 px-4 border-r border-slate-200">Event Description</th>
+                            <th class="py-3 px-4 w-44 border-r border-slate-200 text-right">Amount (₹)</th>
+                            <th class="py-3 px-4 w-36 border-r border-slate-200">Status</th>
+                            <th class="py-3 px-4 w-28 text-center border-r border-slate-200">Indicator</th>
+                            <th class="py-3 px-4 w-16 text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-200 text-sm text-slate-700">
+                        <!-- Rows injected via JavaScript -->
+                    </tbody>
+                    <tfoot>
+                        <tr class="bg-slate-50 font-semibold text-slate-700 border-t border-slate-200">
+                            <td colspan="3" class="py-3 px-4 text-right border-r border-slate-200 text-xs uppercase tracking-wider">Total Amount:</td>
+                            <td id="totalAmountCell" class="py-3 px-4 text-right font-mono text-emerald-700 border-r border-slate-200">₹0.00</td>
+                            <td colspan="3" class="bg-slate-50"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex justify-between items-center">
+                <button id="addBottomRowBtn" class="text-emerald-700 hover:text-emerald-800 text-xs font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-circle-plus"></i> Add Row
+                </button>
+                <div class="text-xs text-slate-500">
+                    Real-time synchronization active with Firebase Realtime Database.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const RTDB_URL = "https://my-calendar-dc01f-default-rtdb.firebaseio.com/";
+        let rowsDataMap = {}; // Map of id -> row object
+        let syncTimeout = null;
+
+        // Format amount in Indian Rupees (₹)
+        function formatRupee(amount) {
+            const num = parseFloat(amount) || 0;
+            return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // Escape HTML for XSS prevention
+        function escapeHTML(str) {
+            return str ? String(str).replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            ) : '';
+        }
+
+        // Render table rows from current data map
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            const keys = Object.keys(rowsDataMap);
+
+            if (keys.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center py-12 text-slate-400">
+                            <div class="flex flex-col items-center justify-center space-y-2">
+                                <i class="fa-solid fa-folder-open text-3xl"></i>
+                                <p class="text-sm font-medium">No records found. Click "Add Row" to begin.</p>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                document.getElementById('rowCountBadge').textContent = '0 rows';
+                document.getElementById('totalAmountCell').textContent = '₹0.00';
+                return;
+            }
+
+            let totalAmount = 0;
+
+            keys.forEach((id, index) => {
+                const row = rowsDataMap[id];
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50/80 transition-colors group';
+
+                const amt = parseFloat(row.amount) || 0;
+                totalAmount += amt;
+
+                const isArranged = row.status === 'Arranged';
+                const statusBadgeClass = isArranged 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : 'bg-amber-50 text-amber-700 border-amber-200';
+                
+                const statusIconHTML = isArranged
+                    ? `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 shadow-sm" title="Arranged"><i class="fa-solid fa-check text-sm font-bold"></i></span>`
+                    : `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-600 shadow-sm animate-pulse" title="Pending"><i class="fa-solid fa-clock text-sm"></i></span>`;
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-4 text-center font-mono text-xs text-slate-400 border-r border-slate-200 bg-slate-50/50">
+                        ${index + 1}
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <input type="date" value="${row.date || new Date().toISOString().split('T')[0]}" data-id="${id}" data-field="date" 
+                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <input type="text" value="${escapeHTML(row.event)}" data-id="${id}" data-field="event" placeholder="Enter event name..."
+                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200 text-right">
+                        <div class="relative flex items-center">
+                            <span class="absolute left-2 text-xs font-semibold text-slate-400">₹</span>
+                            <input type="number" step="0.01" value="${row.amount ?? 0}" data-id="${id}" data-field="amount" placeholder="0.00"
+                                class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded pl-6 pr-2 py-1.5 text-sm text-slate-700 text-right font-mono focus:outline-none transition">
+                        </div>
+                    </td>
+                    <td class="py-2 px-4 border-r border-slate-200">
+                        <select data-id="${id}" data-field="status"
+                            class="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none transition ${statusBadgeClass}">
+                            <option value="Arranged" ${isArranged ? 'selected' : ''}>Arranged</option>
+                            <option value="Pending" ${!isArranged ? 'selected' : ''}>Pending</option>
+                        </select>
+                    </td>
+                    <td class="py-2 px-4 text-center border-r border-slate-200">
+                        ${statusIconHTML}
+                    </td>
+                    <td class="py-2 px-4 text-center">
+                        <button onclick="window.deleteRowItem('${id}')" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-md hover:bg-rose-50 transition" title="Delete Row">
+                            <i class="fa-solid fa-trash-can text-sm"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('rowCountBadge').textContent = `${keys.length} row${keys.length === 1 ? '' : 's'}`;
+            document.getElementById('totalAmountCell').textContent = formatRupee(totalAmount);
+            
+            attachTableEventListeners();
+        }
+
+        // Attach event listeners for cell editing
+        function attachTableEventListeners() {
+            const tbody = document.getElementById('tableBody');
+            
+            tbody.querySelectorAll('input, select').forEach(element => {
+                element.addEventListener('change', (e) => {
+                    const id = e.target.getAttribute('data-id');
+                    const field = e.target.getAttribute('data-field');
+                    let value = e.target.value;
+
+                    if (field === 'amount') {
+                        value = value === '' ? 0 : parseFloat(value);
+                    }
+
+                    if (rowsDataMap[id]) {
+                        rowsDataMap[id][field] = value;
+                        saveRowToFirebase(id, rowsDataMap[id]);
+                        if (field === 'status' || field === 'amount') {
+                            renderTable();
+                        }
+                    }
+                });
+
+                if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'number')) {
+                    element.addEventListener('input', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const field = e.target.getAttribute('data-field');
+                        let value = e.target.value;
+                        if (field === 'amount') {
+                            value = value === '' ? '' : parseFloat(value);
+                        }
+                        if (rowsDataMap[id]) {
+                            rowsDataMap[id][field] = value;
+                            if (field === 'amount') {
+                                let runningTotal = Object.values(rowsDataMap).reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+                                document.getElementById('totalAmountCell').textContent = formatRupee(runningTotal);
+                            }
+                        }
+                    });
+
+                    element.addEventListener('blur', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        if (rowsDataMap[id]) {
+                            saveRowToFirebase(id, rowsDataMap[id]);
+                        }
+                    });
+                }
+            });
+        }
+
+        // Sync status indicator helper
+        function showSyncStatus(text, colorClass) {
+            const badge = document.getElementById('syncStatusBadge');
+            badge.className = `${colorClass} font-semibold flex items-center gap-1`;
+            badge.innerHTML = `<i class="fa-solid fa-cloud"></i> ${text}`;
+        }
+
+        // Save row via Firebase RTDB REST API
+        async function saveRowToFirebase(id, rowData) {
+            showSyncStatus('Saving...', 'text-amber-600');
+            try {
+                const response = await fetch(`${RTDB_URL}/events/${id}.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(rowData)
+                });
+                if (response.ok) {
+                    showSyncStatus('Synced', 'text-emerald-600');
+                } else {
+                    showSyncStatus('Sync Error', 'text-rose-600');
+                }
+            } catch (err) {
+                console.error("Error saving to RTDB:", err);
+                showSyncStatus('Sync Error', 'text-rose-600');
+            }
+        }
+
+        // Delete row from RTDB
+        window.deleteRowItem = async function(id) {
+            delete rowsDataMap[id];
+            renderTable();
+            showSyncStatus('Saving...', 'text-amber-600');
+
+            try {
+                const response = await fetch(`${RTDB_URL}/events/${id}.json`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    showSyncStatus('Synced', 'text-emerald-600');
+                } else {
+                    showSyncStatus('Sync Error', 'text-rose-600');
+                }
+            } catch (err) {
+                console.error("Error deleting from RTDB:", err);
+                showSyncStatus('Sync Error', 'text-rose-600');
+            }
+        }
+
+        // Add a new row with today's date automatically assigned
+        async function addNewRow() {
+            const today = new Date().toISOString().split('T')[0];
+            const id = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
+            const newRow = {
+                date: today,
+                event: '',
+                amount: 0.00,
+                status: 'Pending'
+            };
+            
+            rowsDataMap[id] = newRow;
+            renderTable();
+            await saveRowToFirebase(id, newRow);
+
+            setTimeout(() => {
+                const tbody = document.getElementById('tableBody');
+                const lastRow = tbody.lastElementChild;
+                if (lastRow) {
+                    const eventInput = lastRow.querySelector('input[data-field="event"]');
+                    if (eventInput) eventInput.focus();
+                }
+            }, 50);
+        }
+
+        // Initialize Realtime Database synchronization via SSE (EventSource)
+        function initRealtimeSync() {
+            showSyncStatus('Connecting...', 'text-amber-600');
+            
+            // Initial fetch
+            fetch(`${RTDB_URL}/events.json`)
+                .then(res => res.json())
+                .then(data => {
+                    rowsDataMap = data || {};
+                    renderTable();
+                    showSyncStatus('Synced', 'text-emerald-600');
+                })
+                .catch(err => {
+                    console.error("Error fetching initial data:", err);
+                    showSyncStatus('Connection Error', 'text-rose-600');
+                });
+
+            // Stream changes using EventSource
+            try {
+                const eventSource = new EventSource(`${RTDB_URL}/events.json`);
+                
+                eventSource.addEventListener('put', (e) => {
+                    try {
+                        const packet = JSON.parse(e.data);
+                        // packet.path will be like "/" or "/rowId"
+                        if (packet.path === '/' && packet.data) {
+                            rowsDataMap = packet.data || {};
+                            renderTable();
+                        } else if (packet.path && packet.path !== '/') {
+                            const pathParts = packet.path.split('/').filter(Boolean);
+                            const rowId = pathParts[0];
+                            if (packet.data === null) {
+                                delete rowsDataMap[rowId];
+                            } else if (pathParts.length === 1) {
+                                rowsDataMap[rowId] = packet.data;
+                            } else {
+                                // Nested field update
+                                if (!rowsDataMap[rowId]) rowsDataMap[rowId] = {};
+                                let curr = rowsDataMap[rowId];
+                                for (let i = 1; i < pathParts.length - 1; i++) {
+                                    if (!curr[pathParts[i]]) curr[pathParts[i]] = {};
+                                    curr = curr[pathParts[i]];
+                                }
+                                curr[pathParts[pathParts.length - 1]] = packet.data;
+                            }
+                            renderTable();
+                        }
+                    } catch (parseErr) {
+                        console.error("Error parsing EventSource update:", parseErr);
+                    }
+                });
+
+                eventSource.addEventListener('patch', (e) => {
+                    try {
+                        const packet = JSON.parse(e.data);
+                        if (packet.data) {
+                            Object.keys(packet.data).forEach(rowId => {
+                                if (packet.data[rowId] === null) {
+                                    delete rowsDataMap[rowId];
+                                } else {
+                                    rowsDataMap[rowId] = { ...(rowsDataMap[rowId] || {}), ...packet.data[rowId] };
+                                }
+                            });
+                            renderTable();
+                        }
+                    } catch (patchErr) {
+                        console.error("Error parsing patch update:", patchErr);
+                    }
+                });
+
+                eventSource.onerror = (err) => {
+                    console.warn("EventSource connection issue, retrying...", err);
+                };
+            } catch (ex) {
+                console.warn("EventSource setup skipped:", ex);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initRealtimeSync();
+
+            document.getElementById('addRowBtn').addEventListener('click', addNewRow);
+            document.getElementById('addBottomRowBtn').addEventListener('click', addNewRow);
+        });
+    </script>
+</body>
+</html>
