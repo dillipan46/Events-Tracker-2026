@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Excel-Like Event Table with Auto-Sort</title>
+    <title>Excel-Like Event Table with Auto-Sort & Auto-Save</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -30,15 +30,12 @@
                 </div>
                 <div>
                     <h1 class="text-xl font-bold tracking-tight">Event & Schedule Sheet</h1>
-                    <p class="text-xs text-emerald-200">Auto-Sorted by Date (Ascending) • RTDB Connected</p>
+                    <p class="text-xs text-emerald-200">Auto-Sorted by Date • Auto-Sync Enabled</p>
                 </div>
             </div>
             <div class="flex items-center space-x-3">
                 <button id="loadBtn" class="bg-emerald-800 hover:bg-emerald-900 text-emerald-100 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
-                    <i class="fa-solid fa-cloud-arrow-down"></i> Load from Cloud
-                </button>
-                <button id="saveBtn" class="bg-emerald-500 hover:bg-emerald-400 text-white px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow">
-                    <i class="fa-solid fa-cloud-arrow-up"></i> Save to Cloud
+                    <i class="fa-solid fa-cloud-arrow-down"></i> Reload Cloud
                 </button>
             </div>
         </div>
@@ -53,7 +50,7 @@
                     <i class="fa-solid fa-plus"></i>
                     <span>Add Row</span>
                 </button>
-                <span class="text-xs text-slate-500 italic">Rows automatically re-order by Date (Earliest first)</span>
+                <span class="text-xs text-slate-500 italic">Click the edit icon on any row to modify its details</span>
             </div>
             <div class="text-xs text-slate-500 flex items-center gap-4">
                 <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Arranged</span>
@@ -75,7 +72,7 @@
                             <th class="py-3 px-4 w-44 border-r border-slate-200 text-right">Amount (₹)</th>
                             <th class="py-3 px-4 w-36 border-r border-slate-200">Status</th>
                             <th class="py-3 px-4 w-28 text-center border-r border-slate-200">Indicator</th>
-                            <th class="py-3 px-4 w-16 text-center">Actions</th>
+                            <th class="py-3 px-4 w-24 text-center">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody" class="divide-y divide-slate-200 text-sm text-slate-700">
@@ -105,6 +102,8 @@
     <script>
         const RTDB_URL = "https://my-calendar-dc01f-default-rtdb.firebaseio.com/";
         let rowsDataMap = {}; // Dictionary mapping id -> row object
+        let editingRowId = null; // Tracks which row is currently in edit mode
+        let editingBackup = null; // Backup values in case user hits cancel (cross)
 
         // Format number to Indian Currency Format (₹ with commas)
         function formatRupee(amount) {
@@ -130,10 +129,16 @@
                 if (!dateB) return -1;
                 return dateA.localeCompare(dateB);
             });
-            return entries; // Returns array of [id, rowObject]
+            return entries; 
         }
 
-        // Render table rows and recalculate totals
+        // Update running total display
+        function recalculateTotal() {
+            let runningTotal = Object.values(rowsDataMap).reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+            document.getElementById('totalAmountCell').textContent = formatRupee(runningTotal);
+        }
+
+        // Render table rows
         function renderTable() {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
@@ -156,14 +161,9 @@
                 return;
             }
 
-            let totalAmount = 0;
-
             sortedEntries.forEach(([id, row], index) => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50/80 transition-colors group';
-
-                const amt = parseFloat(row.amount) || 0;
-                totalAmount += amt;
 
                 const isArranged = row.status === 'Arranged';
                 const statusBadgeClass = isArranged 
@@ -174,108 +174,132 @@
                     ? `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 shadow-sm" title="Arranged"><i class="fa-solid fa-check text-sm font-bold"></i></span>`
                     : `<span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-600 shadow-sm animate-pulse" title="Pending"><i class="fa-solid fa-clock text-sm"></i></span>`;
 
-                tr.innerHTML = `
-                    <td class="py-2.5 px-4 text-center font-mono text-xs text-slate-400 border-r border-slate-200 bg-slate-50/50">
-                        ${index + 1}
-                    </td>
-                    <td class="py-2 px-4 border-r border-slate-200">
-                        <input type="date" value="${row.date || new Date().toISOString().split('T')[0]}" data-id="${id}" data-field="date" 
-                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
-                    </td>
-                    <td class="py-2 px-4 border-r border-slate-200">
-                        <input type="text" value="${escapeHTML(row.event)}" data-id="${id}" data-field="event" placeholder="Enter event name..."
-                            class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none transition">
-                    </td>
-                    <td class="py-2 px-4 border-r border-slate-200 text-right">
-                        <div class="relative flex items-center">
-                            <span class="absolute left-2 text-xs font-semibold text-slate-400">₹</span>
-                            <input type="number" step="0.01" value="${row.amount ?? 0}" data-id="${id}" data-field="amount" placeholder="0.00"
-                                class="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-white rounded pl-6 pr-2 py-1.5 text-sm text-slate-700 text-right font-mono focus:outline-none transition">
-                        </div>
-                    </td>
-                    <td class="py-2 px-4 border-r border-slate-200">
-                        <select data-id="${id}" data-field="status"
-                            class="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none transition ${statusBadgeClass}">
-                            <option value="Arranged" ${isArranged ? 'selected' : ''}>Arranged</option>
-                            <option value="Pending" ${!isArranged ? 'selected' : ''}>Pending</option>
-                        </select>
-                    </td>
-                    <td class="py-2 px-4 text-center border-r border-slate-200">
-                        ${statusIconHTML}
-                    </td>
-                    <td class="py-2 px-4 text-center">
-                        <button onclick="window.deleteRowItem('${id}')" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-md hover:bg-rose-50 transition" title="Delete Row">
-                            <i class="fa-solid fa-trash-can text-sm"></i>
-                        </button>
-                    </td>
-                `;
+                const isEditing = (editingRowId === id);
+
+                if (isEditing) {
+                    // Editable Row View
+                    tr.innerHTML = `
+                        <td class="py-2.5 px-4 text-center font-mono text-xs text-slate-400 border-r border-slate-200 bg-slate-50/50">
+                            ${index + 1}
+                        </td>
+                        <td class="py-2 px-4 border-r border-slate-200">
+                            <input type="date" id="edit_date_${id}" value="${row.date || ''}" 
+                                class="w-full bg-white border border-emerald-500 rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none">
+                        </td>
+                        <td class="py-2 px-4 border-r border-slate-200">
+                            <input type="text" id="edit_event_${id}" value="${escapeHTML(row.event)}" placeholder="Enter event name..."
+                                class="w-full bg-white border border-emerald-500 rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none">
+                        </td>
+                        <td class="py-2 px-4 border-r border-slate-200 text-right">
+                            <div class="relative flex items-center">
+                                <span class="absolute left-2 text-xs font-semibold text-slate-400">₹</span>
+                                <input type="number" step="0.01" id="edit_amount_${id}" value="${row.amount ?? 0}" placeholder="0.00"
+                                    class="w-full bg-white border border-emerald-500 rounded pl-6 pr-2 py-1.5 text-sm text-slate-700 text-right font-mono focus:outline-none">
+                            </div>
+                        </td>
+                        <td class="py-2 px-4 border-r border-slate-200">
+                            <select id="edit_status_${id}" class="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none ${statusBadgeClass}">
+                                <option value="Arranged" ${isArranged ? 'selected' : ''}>Arranged</option>
+                                <option value="Pending" ${!isArranged ? 'selected' : ''}>Pending</option>
+                            </select>
+                        </td>
+                        <td class="py-2 px-4 text-center border-r border-slate-200">
+                            ${statusIconHTML}
+                        </td>
+                        <td class="py-2 px-4 text-center space-x-1">
+                            <button onclick="window.saveRowEdit('${id}')" class="text-white bg-emerald-600 hover:bg-emerald-700 p-1.5 rounded-md transition shadow-sm" title="Accept Changes">
+                                <i class="fa-solid fa-check text-xs"></i>
+                            </button>
+                            <button onclick="window.cancelRowEdit('${id}')" class="text-white bg-rose-500 hover:bg-rose-600 p-1.5 rounded-md transition shadow-sm" title="Cancel">
+                                <i class="fa-solid fa-xmark text-xs"></i>
+                            </button>
+                        </td>
+                    `;
+                } else {
+                    // Static / Read-only Row View
+                    tr.innerHTML = `
+                        <td class="py-3 px-4 text-center font-mono text-xs text-slate-400 border-r border-slate-200 bg-slate-50/50">
+                            ${index + 1}
+                        </td>
+                        <td class="py-3 px-4 border-r border-slate-200 font-medium">
+                            ${row.date ? new Date(row.date).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}) : '<span class="text-slate-400 italic">No date</span>'}
+                        </td>
+                        <td class="py-3 px-4 border-r border-slate-200">
+                            ${escapeHTML(row.event) || '<span class="text-slate-400 italic">No description</span>'}
+                        </td>
+                        <td class="py-3 px-4 border-r border-slate-200 text-right font-mono font-medium">
+                            ${formatRupee(row.amount)}
+                        </td>
+                        <td class="py-3 px-4 border-r border-slate-200">
+                            <span class="inline-block px-2.5 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass}">
+                                ${row.status}
+                            </span>
+                        </td>
+                        <td class="py-3 px-4 text-center border-r border-slate-200">
+                            ${statusIconHTML}
+                        </td>
+                        <td class="py-3 px-4 text-center space-x-1">
+                            <button onclick="window.startRowEdit('${id}')" class="text-slate-400 hover:text-emerald-600 p-1.5 rounded-md hover:bg-emerald-50 transition" title="Edit Row">
+                                <i class="fa-solid fa-pen text-sm"></i>
+                            </button>
+                            <button onclick="window.deleteRowItem('${id}')" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-md hover:bg-rose-50 transition" title="Delete Row">
+                                <i class="fa-solid fa-trash-can text-sm"></i>
+                            </button>
+                        </td>
+                    `;
+                }
                 tbody.appendChild(tr);
             });
 
             document.getElementById('rowCountBadge').textContent = `${sortedEntries.length} row${sortedEntries.length === 1 ? '' : 's'}`;
-            document.getElementById('totalAmountCell').textContent = formatRupee(totalAmount);
-            
-            attachTableEventListeners();
+            recalculateTotal();
         }
 
-        // Attach event listeners to input fields
-        function attachTableEventListeners() {
-            const tbody = document.getElementById('tableBody');
-            
-            tbody.querySelectorAll('input, select').forEach(element => {
-                element.addEventListener('change', (e) => {
-                    const id = e.target.getAttribute('data-id');
-                    const field = e.target.getAttribute('data-field');
-                    let value = e.target.value;
+        // Enable Edit Mode for a row
+        window.startRowEdit = function(id) {
+            editingRowId = id;
+            editingBackup = JSON.parse(JSON.stringify(rowsDataMap[id])); // Backup in case of cancel
+            renderTable();
+        }
 
-                    if (field === 'amount') {
-                        value = value === '' ? 0 : parseFloat(value);
-                    }
+        // Save edits (Tick symbol) -> Accept and auto-sync to cloud
+        window.saveRowEdit = function(id) {
+            const dateVal = document.getElementById(`edit_date_${id}`).value;
+            const eventVal = document.getElementById(`edit_event_${id}`).value;
+            const amountVal = parseFloat(document.getElementById(`edit_amount_${id}`).value) || 0;
+            const statusVal = document.getElementById(`edit_status_${id}`).value;
 
-                    if (rowsDataMap[id]) {
-                        rowsDataMap[id][field] = value;
-                        // If date changed, re-render immediately to trigger auto-sort
-                        if (field === 'date' || field === 'status') {
-                            renderTable();
-                        }
-                    }
-                });
+            rowsDataMap[id] = {
+                date: dateVal,
+                event: eventVal,
+                amount: amountVal,
+                status: statusVal
+            };
 
-                if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'number')) {
-                    element.addEventListener('input', (e) => {
-                        const id = e.target.getAttribute('data-id');
-                        const field = e.target.getAttribute('data-field');
-                        let value = e.target.value;
-                        if (field === 'amount') {
-                            value = value === '' ? '' : parseFloat(value);
-                        }
-                        if (rowsDataMap[id]) {
-                            rowsDataMap[id][field] = value;
-                            if (field === 'amount') {
-                                let runningTotal = Object.values(rowsDataMap).reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
-                                document.getElementById('totalAmountCell').textContent = formatRupee(runningTotal);
-                            }
-                        }
-                    });
+            editingRowId = null;
+            editingBackup = null;
+            renderTable();
+            saveToFirebase(); // Automatic sync to database
+        }
 
-                    // When date input loses focus, re-sort and re-render
-                    if (element.getAttribute('data-field') === 'date') {
-                        element.addEventListener('blur', () => {
-                            renderTable();
-                        });
-                    }
-                }
-            });
+        // Cancel edits (Cross symbol) -> Restore from backup
+        window.cancelRowEdit = function(id) {
+            if (editingBackup) {
+                rowsDataMap[id] = editingBackup;
+            }
+            editingRowId = null;
+            editingBackup = null;
+            renderTable();
         }
 
         // Delete row action
         window.deleteRowItem = function(id) {
             delete rowsDataMap[id];
-            renderUpdateBadge('Deleted', 'text-amber-600');
             renderTable();
+            saveToFirebase(); // Automatic sync
         }
 
-        // Add new row with today's date
+        // Add new row and instantly put it into edit mode
         function addNewRow() {
             const today = new Date().toISOString().split('T')[0];
             const id = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
@@ -285,17 +309,11 @@
                 amount: 0.00,
                 status: 'Pending'
             };
+            
+            editingRowId = id;
+            editingBackup = { date: today, event: '', amount: 0.00, status: 'Pending' };
             renderTable();
-            renderUpdateBadge('Row Added', 'text-emerald-600');
-
-            setTimeout(() => {
-                const tbody = document.getElementById('tableBody');
-                const lastRow = tbody.lastElementChild;
-                if (lastRow) {
-                    const eventInput = lastRow.querySelector('input[data-field="event"]');
-                    if (eventInput) eventInput.focus();
-                }
-            }, 50);
+            renderUpdateBadge('New Row Added', 'text-emerald-600');
         }
 
         // Badge status helper
@@ -314,7 +332,7 @@
                     const data = await response.json();
                     rowsDataMap = data || {};
                     renderTable();
-                    renderUpdateBadge('Loaded from Cloud', 'text-emerald-600');
+                    renderUpdateBadge('Synced with Cloud', 'text-emerald-600');
                 } else {
                     renderUpdateBadge('Load Failed', 'text-rose-600');
                 }
@@ -324,17 +342,25 @@
             }
         }
 
-        // Save current table data to Firebase Realtime Database
+        // Save current table data to Firebase Realtime Database automatically
         async function saveToFirebase() {
-            renderUpdateBadge('Saving...', 'text-amber-600');
+            renderUpdateBadge('Auto-saving...', 'text-amber-600');
             try {
+                const dataToSave = {};
+                Object.keys(rowsDataMap).forEach(key => {
+                    dataToSave[key] = {
+                        ...rowsDataMap[key],
+                        amount: parseFloat(rowsDataMap[key].amount) || 0
+                    };
+                });
+
                 const response = await fetch(`${RTDB_URL}/events.json`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(rowsDataMap)
+                    body: JSON.stringify(dataToSave)
                 });
                 if (response.ok) {
-                    renderUpdateBadge('Saved Successfully', 'text-emerald-600');
+                    renderUpdateBadge('Saved & Synced', 'text-emerald-600');
                 } else {
                     renderUpdateBadge('Save Failed', 'text-rose-600');
                 }
@@ -351,7 +377,6 @@
             document.getElementById('addRowBtn').addEventListener('click', addNewRow);
             document.getElementById('addBottomRowBtn').addEventListener('click', addNewRow);
             document.getElementById('loadBtn').addEventListener('click', loadFromFirebase);
-            document.getElementById('saveBtn').addEventListener('click', saveToFirebase);
         });
     </script>
 </body>
